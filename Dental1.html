@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Toothbrush Runner</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #e0f7fa;
+      font-family: sans-serif;
+    }
+    canvas {
+      display: block;
+      background: #b3e5fc;
+    }
+    #hud {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      font-size: 18px;
+      font-weight: bold;
+      color: #333;
+      z-index: 2;
+    }
+    #buttons {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 2;
+      display: flex;
+      gap: 20px;
+    }
+    .btn {
+      background: #fff;
+      border: 2px solid #333;
+      border-radius: 8px;
+      padding: 10px 20px;
+      font-size: 18px;
+      font-weight: bold;
+      color: #333;
+    }
+    .btn:active {
+      background: #ddd;
+    }
+  </style>
+</head>
+<body>
+<div id="hud">Teeth Jumped: 0 | Best: 0</div>
+<div id="buttons">
+  <button class="btn" onclick="handleJump()">Jump</button>
+  <button class="btn" onclick="handleSmash()">Smash</button>
+</div>
+<canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const hud = document.getElementById('hud');
+
+canvas.width = window.innerWidth;
+canvas.height = 400;
+
+let gameSpeed = 4;
+let gravity = 0.5;
+let score = 0;
+let bestScore = localStorage.getItem('bestScore') || 0;
+let shieldActive = false;
+let shieldTimer = 0;
+
+const player = {
+  x: 50,
+  y: canvas.height - 60,
+  width: 40,
+  height: 40,
+  velocityY: 0,
+  jumping: false,
+  color: '#f60',
+  hasToothbrush: true
+};
+
+const obstacles = []; // teeth and bacteria
+const powerups = [];  // mouthwash
+let spawnTimer = 0;
+let powerupTimer = 0;
+
+function drawPlayer() {
+  if (shieldActive) {
+    ctx.beginPath();
+    ctx.arc(player.x + 20, player.y + 20, 30, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(173, 216, 230, 0.3)';
+    ctx.fill();
+    ctx.strokeStyle = '#66c';
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = player.color;
+  ctx.fillRect(player.x, player.y, player.width, player.height);
+
+  if (player.hasToothbrush) {
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(player.x + 30, player.y + 10, 10, 5);
+    ctx.fillStyle = '#333';
+    ctx.fillRect(player.x + 25, player.y + 12, 5, 2);
+  }
+}
+
+function drawTooth(ob) {
+  ctx.save();
+  ctx.translate(ob.x, ob.y);
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.quadraticCurveTo(20, -20, 40, 0);
+  ctx.lineTo(40, 30);
+  ctx.quadraticCurveTo(30, 35, 25, 30);
+  ctx.quadraticCurveTo(20, 35, 15, 30);
+  ctx.quadraticCurveTo(10, 35, 0, 30);
+  ctx.closePath();
+  ctx.fillStyle = "#fff";
+  ctx.fill();
+  ctx.strokeStyle = "#aaa";
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBacteria(ob) {
+  ctx.save();
+  ctx.translate(ob.x, ob.y);
+  ctx.beginPath();
+  ctx.arc(20, 20, 20, 0, Math.PI * 2);
+  ctx.fillStyle = ob.smashed ? '#88cc88' : 'green';
+  ctx.fill();
+  ctx.strokeStyle = "#003300";
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawMouthwash(pu) {
+  ctx.save();
+  ctx.translate(pu.x, pu.y);
+  ctx.fillStyle = '#00bcd4';
+  ctx.fillRect(0, 0, 20, 30);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(5, 0, 10, 5);
+  ctx.restore();
+}
+
+function spawnObstacle() {
+  const type = Math.random() < 0.5 ? 'tooth' : 'bacteria';
+  obstacles.push({
+    type,
+    x: canvas.width,
+    y: canvas.height - 40,
+    width: 40,
+    height: 40,
+    smashed: false
+  });
+}
+
+function spawnMouthwash() {
+  powerups.push({
+    x: canvas.width,
+    y: canvas.height - 140,
+    width: 20,
+    height: 30
+  });
+}
+
+function update() {
+  if (player.jumping) {
+    player.velocityY += gravity;
+    player.y += player.velocityY;
+    if (player.y >= canvas.height - 60) {
+      player.y = canvas.height - 60;
+      player.velocityY = 0;
+      player.jumping = false;
+    }
+  }
+
+  if (shieldActive) {
+    shieldTimer--;
+    if (shieldTimer <= 0) {
+      shieldActive = false;
+    }
+  }
+
+  // Move and check obstacles
+  for (let i = obstacles.length - 1; i >= 0; i--) {
+    const ob = obstacles[i];
+    ob.x -= gameSpeed;
+
+    if (ob.x + ob.width < 0) {
+      obstacles.splice(i, 1);
+      continue;
+    }
+
+    const hit = player.x < ob.x + ob.width &&
+                player.x + player.width > ob.x &&
+                player.y < ob.y + ob.height &&
+                player.y + player.height > ob.y;
+
+    if (hit) {
+      if (shieldActive) {
+        obstacles.splice(i, 1); // auto clear
+      } else if (ob.type === 'tooth') {
+        return gameOver('You hit a tooth!');
+      } else if (ob.type === 'bacteria' && !ob.smashed) {
+        return gameOver('Bacteria got you!');
+      }
+    }
+
+    if (ob.type === 'tooth' && !ob.counted && ob.x + ob.width < player.x) {
+      score++;
+      ob.counted = true;
+      updateScore();
+    }
+  }
+
+  // Move and check mouthwash
+  for (let i = powerups.length - 1; i >= 0; i--) {
+    const pu = powerups[i];
+    pu.x -= gameSpeed;
+
+    if (pu.x + pu.width < 0) {
+      powerups.splice(i, 1);
+      continue;
+    }
+
+    const hit = player.x < pu.x + pu.width &&
+                player.x + player.width > pu.x &&
+                player.y < pu.y + pu.height &&
+                player.y + player.height > pu.y;
+
+    if (hit) {
+      shieldActive = true;
+      shieldTimer = 600; // ~10 seconds at 60fps
+      powerups.splice(i, 1);
+    }
+  }
+
+  // Spawn timers
+  spawnTimer++;
+  if (spawnTimer > 90 + Math.random() * 80) {
+    spawnObstacle();
+    spawnTimer = 0;
+  }
+
+  powerupTimer++;
+  if (powerupTimer > 600) {
+    spawnMouthwash();
+    powerupTimer = 0;
+  }
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawPlayer();
+  obstacles.forEach(ob => {
+    if (ob.type === 'tooth') drawTooth(ob);
+    else drawBacteria(ob);
+  });
+  powerups.forEach(drawMouthwash);
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function updateScore() {
+  hud.innerText = `Teeth Jumped: ${score} | Best: ${bestScore}`;
+}
+
+function gameOver(message) {
+  if (score > bestScore) {
+    bestScore = score;
+    localStorage.setItem('bestScore', bestScore);
+  }
+  alert(`${message}\nTeeth jumped: ${score}\n\nCreated by Jacob Peterson, DDS`);
+  document.location.reload();
+}
+
+// Keyboard controls
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') handleJump();
+  else if (e.code === 'ArrowRight') handleSmash();
+});
+
+// Button controls
+function handleJump() {
+  if (!player.jumping) {
+    player.jumping = true;
+    player.velocityY = -10;
+  }
+}
+
+function handleSmash() {
+  obstacles.forEach(ob => {
+    if (ob.type === 'bacteria' &&
+        !ob.smashed &&
+        ob.x < player.x + 60 &&
+        ob.x > player.x) {
+      ob.smashed = true;
+    }
+  });
+}
+
+updateScore();
+loop();
+</script>
+</body>
+</html>
